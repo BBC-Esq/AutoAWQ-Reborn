@@ -115,7 +115,6 @@ class Phi3Fuser:
                     dev=device,
                     max_seq_len=self.model.config.max_position_embeddings,
                     rope_theta=self.model.config.rope_theta,
-                    rope_scaling=self.model.config.rope_scaling,
                 )
             )
 

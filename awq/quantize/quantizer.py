@@ -706,7 +706,7 @@ class AwqQuantizer:
                 "block_sparse_moe": layer.block_sparse_moe,
             }
 
-        if self.awq_model.model_type == "deepseek_v2" or self.awq_model.model_type == "deepseek_v3":
+        if self.awq_model.model_type == "deepseek_v3":
             named_linears = {
                 **named_linears,
                 "mlp": layer.mlp,

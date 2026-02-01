@@ -2,35 +2,12 @@ import torch
 import torch.nn as nn
 from typing import Tuple, List
 from awq.utils.utils import get_best_device
-from awq.modules.act import ScaledActivation
 from awq.utils.module import get_op_by_name, set_op_by_name
-from transformers.models.bloom.modeling_bloom import BloomGelu
 from transformers.models.llama.modeling_llama import LlamaRMSNorm
-from transformers.models.gemma.modeling_gemma import GemmaRMSNorm
 from transformers.models.gemma2.modeling_gemma2 import Gemma2RMSNorm
-from transformers.models.cohere.modeling_cohere import CohereLayerNorm
-from transformers.activations import NewGELUActivation, GELUActivation
 
-# Handle PytorchGELUTanh rename in newer transformers versions
-try:
-    from transformers.activations import PytorchGELUTanh
-except ImportError:
-    try:
-        from transformers.activations import GELUTanh as PytorchGELUTanh
-    except ImportError:
-        # Fallback: create equivalent class if neither exists
-        class PytorchGELUTanh(nn.Module):
-            def forward(self, input):
-                return nn.functional.gelu(input, approximate="tanh")
 
-allowed_norms = [nn.LayerNorm, LlamaRMSNorm, GemmaRMSNorm, Gemma2RMSNorm, CohereLayerNorm]
-allowed_act_fns = [
-    nn.GELU,
-    BloomGelu,
-    NewGELUActivation,
-    PytorchGELUTanh,
-    GELUActivation,
-]
+allowed_norms = [LlamaRMSNorm, Gemma2RMSNorm]
 
 
 @torch.no_grad()
@@ -74,11 +51,6 @@ def apply_scale(module, scales_list, input_feat_dict=None):
         ):
             scale_ln_fcs(prev_op, layers, scales)
 
-        elif any(isinstance(prev_op, t) for t in allowed_act_fns):
-            new_module = ScaledActivation(prev_op, scales)
-            set_op_by_name(module, prev_op_name, new_module)
-            scale_gelu_fc(prev_op, layers[0], scales)
-
         else:
             raise NotImplementedError(f"prev_op {type(prev_op)} not supported yet!")
 
@@ -105,7 +77,7 @@ def scale_ln_fcs(ln: nn.Linear, fcs: List[nn.Linear], scales: torch.Tensor):
 
     # GemmaRMSNorm is different from Llama's in that it multiplies
     # (1 + weight) to the output, instead of just weight.
-    if isinstance(ln, GemmaRMSNorm) or isinstance(ln, Gemma2RMSNorm):
+    if isinstance(ln, Gemma2RMSNorm):
         ln.weight += 1
         ln.weight.div_(scales)
         ln.weight -= 1
@@ -163,14 +135,3 @@ def scale_fc_fcs(fc1: nn.Linear, fcs: List[nn.Linear], scales: torch.Tensor):
     for fc in fcs:
         for p in fc.parameters():
             assert torch.isnan(p).sum() == 0
-
-
-@torch.no_grad()
-def scale_gelu_fc(gelu: allowed_act_fns, fc: nn.Linear, scales: torch.Tensor):
-    assert any(isinstance(gelu, t) for t in allowed_act_fns)
-    assert isinstance(fc, nn.Linear)
-
-    fc.weight.mul_(scales.view(1, -1).to(fc.weight.device))
-
-    for p in fc.parameters():
-        assert torch.isnan(p).sum() == 0

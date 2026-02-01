@@ -168,21 +168,6 @@ def get_attention_shapes(
     if attention_shapes is not None:
         attention_shapes = attention_shapes
 
-    elif n_kv_heads == 0:
-        attention_shapes = {
-            "xqkv_view": (-1, n_heads, head_dim),
-            "xq_slice": lambda xqkv: xqkv[:, :, 0],
-            "xk_slice": lambda xqkv: xqkv[:, :, 1],
-            "xv_slice": lambda xqkv: xqkv[:, :, 2],
-            "xq_view": (n_heads, head_dim),
-            "xk_view": (n_heads, head_dim),
-            "xv_view": (n_heads, head_dim),
-            "xk_reshape": (n_heads, head_dim // 8, 8),
-            "single_xq_view": (n_heads, head_dim),
-            "single_xk_view": (n_heads, head_dim),
-            "single_xv_view": (n_heads, head_dim),
-        }
-
     else:
         attention_shapes = {
             "xqkv_view": (n_heads + n_kv_heads * 2, head_dim),

@@ -86,44 +86,6 @@ class RoPE(nn.Module):
         return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
-class ALiBi(nn.Module):
-    def __init__(self, n_heads, max_seq_len, device, alibi_bias_max=8):
-        super(ALiBi, self).__init__()
-
-        # Initialize ALiBi slopes and bias
-        slopes, bias = self.build_alibi_bias(
-            n_heads, max_seq_len, alibi_bias_max=alibi_bias_max
-        )
-        self.slopes = nn.Parameter(slopes.float().to(device), requires_grad=False)
-        self.bias = nn.Parameter(bias.float().to(device), requires_grad=False)
-
-    @staticmethod
-    def gen_slopes(n_heads, alibi_bias_max=8):
-        _n_heads = 2 ** math.ceil(math.log2(n_heads))
-        m = torch.arange(1, _n_heads + 1, dtype=torch.float32)
-        m = m.mul(alibi_bias_max / _n_heads)
-        slopes = 1.0 / torch.pow(2, m)
-
-        if _n_heads != n_heads:
-            slopes = torch.cat([slopes[1::2], slopes[::2]])[:n_heads]
-
-        return slopes.view(1, n_heads, 1, 1)
-
-    @staticmethod
-    def build_alibi_bias(n_heads, seq_len, alibi_bias_max=8, dtype=torch.float32):
-        alibi_bias = torch.arange(1 - seq_len, 1, dtype=torch.int32).view(
-            1, 1, 1, seq_len
-        )
-        slopes = ALiBi.gen_slopes(n_heads, alibi_bias_max)
-        alibi_bias = alibi_bias * slopes
-        slopes = slopes.squeeze(0).squeeze(-1).squeeze(-1)
-        return slopes.to(dtype=dtype), alibi_bias.to(dtype=dtype)
-
-    def forward(self, scores, seqlen):
-        scores += self.bias[..., :seqlen]
-        return scores
-
-
 class QuantAttentionFused(nn.Module):
     def __init__(
         self,
@@ -134,7 +96,6 @@ class QuantAttentionFused(nn.Module):
         o_proj,
         dev,
         max_seq_len=2048,
-        use_alibi=False,
         attention_shapes=None,
         rope_theta=10000,
         partial_rotary_factor=1.0,
@@ -159,24 +120,18 @@ class QuantAttentionFused(nn.Module):
         self.q_norm = q_norm
         self.k_norm = k_norm
         self.start_pos = 0
-        self.use_alibi = use_alibi
         self.cache_batch_size = int(os.getenv("AWQ_BATCH_SIZE", "1"))
-
-        if kwargs.get("max_length") is not None:
-            max_seq_len = kwargs["max_length"]
 
         self.max_seq_len = max_seq_len
         self.is_hf_transformers = False
         self.rope_theta = rope_theta
 
-        # attention shapes for self attention
         self.attention_shapes = get_attention_shapes(
             attention_shapes,
             n_heads,
             n_kv_heads,
             self.head_dim,
         )
-        # cache store that rolls cache
         self.cache = WindowedCache(
             cache_batch_size=self.cache_batch_size,
             n_heads=n_heads,
@@ -186,26 +141,15 @@ class QuantAttentionFused(nn.Module):
             device=dev,
         )
 
-        if use_alibi:
-            self.alibi = ALiBi(n_heads, max_seq_len, dev)
-            self.rotary_dim = 0
-            self.is_neox = False
-        else:
-            self.alibi = None
-            self.partial_rotary_factor = partial_rotary_factor
-            self.rotary_dim = int(self.head_dim * self.partial_rotary_factor)
-            self.rope = RoPE(self.rotary_dim, max_seq_len, dev, rope_theta)
-            self.is_neox = True
-
-        if kwargs.get("is_neox") is not None:
-            self.is_neox = kwargs["is_neox"]
+        self.partial_rotary_factor = partial_rotary_factor
+        self.rotary_dim = int(self.head_dim * self.partial_rotary_factor)
+        self.rope = RoPE(self.rotary_dim, max_seq_len, dev, rope_theta)
 
         self.attn_logit_softcapping = attn_logit_softcapping
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs):
         bsz, seqlen, _ = hidden_states.shape
 
-        # Reallocate cache if batch size changes
         if bsz != self.cache_batch_size:
             if bsz > self.cache_batch_size:
                 self.cache.increase_batch_size(bsz)
@@ -214,7 +158,6 @@ class QuantAttentionFused(nn.Module):
                 self.cache.decrease_batch_size(bsz)
                 self.cache_batch_size = bsz
 
-            # Always reset to 0
             self.start_pos = 0
 
         hf_is_generating = False
@@ -230,10 +173,6 @@ class QuantAttentionFused(nn.Module):
         if self.is_hf_transformers and "use_cache" in kwargs:
             hf_is_generating = kwargs["use_cache"]
 
-        # In case we re-generate, we need to refresh the starting position
-        # to 0. We detect it by checking if `past_key_values` is set to None,
-        # which indicates that we are on the first step of `generate()`.
-        # This is only applicable for `transformers` integration
         if (
             self.is_hf_transformers
             and (hf_is_first_forward or hf_is_new_cache_first_forward)
@@ -252,10 +191,9 @@ class QuantAttentionFused(nn.Module):
         if self.k_norm is not None:
             xk = self.k_norm(xk)
 
-        if not self.use_alibi:
-            xq, xk = self.rope.forward(
-                xq, xk, self.start_pos, seqlen, partial=self.partial_rotary_factor < 1
-            )
+        xq, xk = self.rope.forward(
+            xq, xk, self.start_pos, seqlen, partial=self.partial_rotary_factor < 1
+        )
 
         self.cache.to(xq)
         self.cache.update_kv(
@@ -272,7 +210,6 @@ class QuantAttentionFused(nn.Module):
                 k=xk,
                 v=xv,
                 causal=True,
-                alibi_slopes=self.alibi.slopes if self.alibi is not None else None,
                 softcap=self.attn_logit_softcapping,
             )
         else:
@@ -288,7 +225,6 @@ class QuantAttentionFused(nn.Module):
                 v_cache=self.cache.v,
                 cache_seqlens=cache_seqlens,
                 causal=True,
-                alibi_slopes=self.alibi.slopes if self.alibi is not None else None,
                 softcap=self.attn_logit_softcapping,
             )
 
@@ -299,9 +235,6 @@ class QuantAttentionFused(nn.Module):
         if self.is_hf_transformers and not hf_is_generating:
             self.start_pos = 0
 
-        # past_key_value is replaced with cache_v, cache_k, returning empty data
-        # we pass a dummy past kv cache for transformers to be able to retrieve the correct info
-        # about past key length
         past_key_value = [torch.zeros(1, 1, self.start_pos, 1)]
 
         if HF_NEW_CACHE_FORMAT and self.is_hf_transformers:
