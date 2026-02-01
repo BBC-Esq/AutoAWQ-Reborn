@@ -15,10 +15,6 @@ class Qwen2VLAWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: "Qwen2VLForConditionalGeneration"):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: "Qwen2VLForConditionalGeneration", device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
         model.visual = model.visual.to(device)

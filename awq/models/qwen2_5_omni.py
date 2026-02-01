@@ -17,10 +17,6 @@ class Qwen2_5_OmniAWQForConditionalGeneration(BaseAWQForCausalLM):
         return model.thinker.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: "Qwen2_5OmniForConditionalGeneration"):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: "Qwen2_5OmniForConditionalGeneration", device: str):
         model.thinker.model.embed_tokens = model.thinker.model.embed_tokens.to(device)
         model.thinker.visual = model.thinker.visual.to(device)

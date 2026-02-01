@@ -19,10 +19,6 @@ class Phi3VAWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: OldPhi3DecoderLayer):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model, device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
 

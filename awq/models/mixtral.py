@@ -29,10 +29,6 @@ class MixtralAWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: OldMixtralForCausalLM, device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
 

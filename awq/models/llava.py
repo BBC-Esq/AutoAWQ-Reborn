@@ -27,10 +27,6 @@ class LlavaAWQForCausalLM(BaseAWQForCausalLM):
         return model.language_model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: OldLlamaDecoderLayer):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: OldLlavaForConditionalGeneration, device: str):
         model.language_model.model.embed_tokens = model.get_input_embeddings().to(
             device

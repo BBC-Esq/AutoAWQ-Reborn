@@ -25,10 +25,6 @@ class MistralAWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: OldMistralDecoderLayer):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: OldMistralForCausalLM, device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
 

@@ -25,10 +25,6 @@ class LlamaAWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: OldLlamaDecoderLayer):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: OldLlamaForCausalLM, device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
         model.model.rotary_emb = model.model.rotary_emb.to(device)

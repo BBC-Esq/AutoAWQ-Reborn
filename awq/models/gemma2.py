@@ -27,10 +27,6 @@ class Gemma2AWQForCausalLM(BaseAWQForCausalLM):
         return model.model.layers
 
     @staticmethod
-    def get_act_for_scaling(module: OldGemmaDecoderLayer):
-        return dict(is_scalable=False)
-
-    @staticmethod
     def move_embed(model: OldGemmaForCausalLM, device: str):
         model.model.embed_tokens = model.model.embed_tokens.to(device)
 
